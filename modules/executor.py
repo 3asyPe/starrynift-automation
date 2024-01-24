@@ -23,7 +23,7 @@ class Executor:
             await withdraw_from_binance(address=account.address, proxy=account.proxy)
 
             if i != len(self.accounts):
-                await sleep(account.address)
+                await sleep(account)
 
     async def run_starrynift(self):
         groups = self._generate_groups()

@@ -12,8 +12,8 @@ RETRIES = 2
 
 THREADS = 3
 
-MIN_SLEEP = 30
-MAX_SLEEP = 500
+MIN_SLEEP = 1
+MAX_SLEEP = 10
 
 BNB_RPC = "https://bsc.publicnode.com"
 
