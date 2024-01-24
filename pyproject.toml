@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "starrynift-automation"
+version = "0.1.0"
+description = ""
+authors = ["Alex <alex.kvasha.work@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+loguru = "^0.7.2"
+web3 = "^6.14.0"
+aiohttp = "^3.9.1"
+fake-useragent = "^1.4.0"
+questionary = "^2.0.1"
+hdwallet = "^2.2.1"
+ccxt = "^4.2.20"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
