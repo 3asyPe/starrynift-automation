@@ -20,7 +20,7 @@ async def sleep(account=None):
 def retry(func):
     async def wrapper(*args, **kwargs):
         retries = 0
-        while retries < RETRIES:
+        while retries <= RETRIES:
             try:
                 result = await func(*args, **kwargs)
                 return result
@@ -28,7 +28,7 @@ def retry(func):
                 traceback.print_exc()
                 retries += 1
                 logger.error(f"Error | {e}")
-                if retries < RETRIES:
+                if retries <= RETRIES:
                     logger.info(f"Retrying... {retries}/{RETRIES}")
                     await sleep()
 

@@ -471,11 +471,17 @@ class Account:
             return
         logger.info(f"[{self.id}][{self.address}] Ruffle xp: {info['xp']}")
 
-        status, tx_hash = await self.send_ruffle_tx(
+        result = await self.send_ruffle_tx(
             xp=info["xp"],
             signature=info["signature"],
             nonce=info["nonce"],
         )
+        if result is None:
+            logger.error(f"[{self.id}][{self.address}] Ruffle failed")
+            return
+
+        status, tx_hash = result
+
         await self.send_ruffle_hash(tx_hash)
 
         logger.success(f"[{self.id}][{self.address}] Ruffle success")
