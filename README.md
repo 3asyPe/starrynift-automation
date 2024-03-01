@@ -14,7 +14,9 @@ TG channel - https://t.me/easypeoff
 
 5) Complete quests (Follow and being 10 minutes online are now supported)
 
-6) Get account stats (UserId, Level, XP, ReferralCode)
+6) Use free daily ruffles (free 0 - 50xp on daily basis)
+
+7) Get account stats (UserId, Level, XP, ReferralCode)
 
 Other:
 
