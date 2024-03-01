@@ -1,10 +1,11 @@
 import asyncio
+import random
 import time
 from eth_account import Account as EthAccount
 from eth_account.messages import encode_defunct
 from loguru import logger
 from modules.utils import retry
-from settings import BNB_RPC, REF_LINK, USER_IDS_TO_FOLLOW
+from settings import BNB_RPC, DISABLE_SSL, OPBNB_RPC, REF_LINK, USER_IDS_TO_FOLLOW
 from config import DAILY_CLAIM_ABI
 import aiohttp
 
@@ -38,6 +39,7 @@ class Account:
         self.proxy = proxy
         self.account = EthAccount.from_key(self.key)
         self.address = self.account.address
+        self.user_agent = user_agent
 
         self.referral_code = REF_LINK.split("=")[1]
 
@@ -54,6 +56,9 @@ class Account:
         self.user_id = None
 
     async def make_request(self, method, url, **kwargs):
+        if DISABLE_SSL:
+            kwargs["ssl"] = False
+
         async with aiohttp.ClientSession(
             headers=self.headers, trust_env=True
         ) as session:
@@ -74,11 +79,16 @@ class Account:
             + "Z"
         )
 
-    async def wait_until_tx_finished(self, hash: str, max_wait_time=480) -> None:
+    async def wait_until_tx_finished(
+        self, hash: str, max_wait_time=480, web3=None
+    ) -> None:
+        if web3 is None:
+            web3 = self.w3
+
         start_time = time.time()
         while True:
             try:
-                receipts = await self.w3.eth.get_transaction_receipt(hash)
+                receipts = await web3.eth.get_transaction_receipt(hash)
                 status = receipts.get("status")
                 if status == 1:
                     logger.success(f"[{self.address}] {hash.hex()} successfully!")
@@ -101,30 +111,39 @@ class Account:
     async def send_data_tx(
         self, to, from_, data, gas_price=None, gas_limit=None, nonce=None, chain_id=None
     ):
+        if chain_id == 56:
+            web3 = self.w3
+        elif chain_id == 204:
+            web3 = AsyncWeb3(
+                AsyncWeb3.AsyncHTTPProvider(OPBNB_RPC),
+                middlewares=[async_geth_poa_middleware],
+            )
+        else:
+            raise ValueError("Invalid chain id")
+
         transaction = {
             "to": to,
             "from": from_,
             "data": data,
-            "gasPrice": gas_price
-            or self.w3.to_wei(await self.w3.eth.gas_price, "gwei"),
-            "gas": gas_limit
-            or await self.w3.eth.estimate_gas({"to": to, "data": data}),
-            "nonce": nonce or await self.w3.eth.get_transaction_count(self.address),
-            "chainId": chain_id or await self.w3.eth.chain_id,
+            "gasPrice": gas_price or web3.to_wei(await web3.eth.gas_price, "gwei"),
+            "gas": gas_limit or await web3.eth.estimate_gas({"to": to, "data": data}),
+            "nonce": nonce or await web3.eth.get_transaction_count(self.address),
+            "chainId": chain_id or await web3.eth.chain_id,
         }
 
-        signed_transaction = self.w3.eth.account.sign_transaction(transaction, self.key)
+        signed_transaction = web3.eth.account.sign_transaction(transaction, self.key)
         try:
-            transaction_hash = await self.w3.eth.send_raw_transaction(
+            transaction_hash = await web3.eth.send_raw_transaction(
                 signed_transaction.rawTransaction
             )
             tx_hash = await self.wait_until_tx_finished(
-                transaction_hash, max_wait_time=480
+                transaction_hash, max_wait_time=480, web3=web3
             )
             if tx_hash is None:
                 return False, None
             return True, tx_hash
         except Exception as e:
+            logger.error(f"[{self.id}][{self.address}] Error while sending tx | {e}")
             return e, None
 
     def sign_msg(self, msg):
@@ -255,7 +274,12 @@ class Account:
             )
             return
 
-        status, tx_hash = await self.send_daily_tx()
+        result = await self.send_daily_tx()
+        if result is None:
+            logger.error(f"[{self.id}][{self.address}] Failed daily check in")
+            return
+
+        status, tx_hash = result
 
         if status is True and await self.send_daily_tx_hash(tx_hash):
             logger.success(f"[{self.id}][{self.address}] Successfully daily checked in")
@@ -264,7 +288,7 @@ class Account:
 
     @retry
     async def send_daily_tx(self):
-        return await self.send_data_tx(
+        status, hash = await self.send_data_tx(
             to="0xE3bA0072d1da98269133852fba1795419D72BaF4",
             from_=self.address,
             data=f"0x9e4cda43",
@@ -272,6 +296,11 @@ class Account:
             gas_limit=100000,
             chain_id=56,
         )
+
+        if not status:
+            raise RuntimeError(f"Error while sending daily tx | {hash}")
+
+        return status, hash
 
     @retry
     async def send_daily_tx_hash(self, tx_hash):
@@ -413,3 +442,99 @@ class Account:
             raise RuntimeError(f"Error while sending ping | {await response.text()}")
 
         return True
+
+    async def get_if_already_ruffled_today(self):
+        response = await self.make_request(
+            "post",
+            f"https://api.starrynift.art/api-v2/citizenship/raffle/status",
+            json={},
+        )
+
+        if response.status not in (200, 201):
+            raise RuntimeError(
+                f"Error while checking if ruffled today | {await response.text()}"
+            )
+
+        return (await response.json()).get("used")
+
+    async def ruffle(self):
+        logger.info(f"[{self.id}][{self.address}] Ruffling...")
+
+        await asyncio.sleep(random.randint(3, 10))
+        info = await self.get_ruffle_info()
+        if info["used"]:
+            logger.info(f"[{self.id}][{self.address}] Already used free ruffle today")
+            return
+
+        if not info["signature"]:
+            logger.error(f"[{self.id}][{self.address}] Daily wasn't completed")
+            return
+        logger.info(f"[{self.id}][{self.address}] Ruffle xp: {info['xp']}")
+
+        status, tx_hash = await self.send_ruffle_tx(
+            xp=info["xp"],
+            signature=info["signature"],
+            nonce=info["nonce"],
+        )
+        await self.send_ruffle_hash(tx_hash)
+
+        logger.success(f"[{self.id}][{self.address}] Ruffle success")
+        return True
+
+    @retry
+    async def send_ruffle_tx(self, xp, nonce, signature):
+        data = (
+            "0x9fc96c7e"
+            "0000000000000000000000000000000000000000000000000000000000000020"
+            f"000000000000000000000000{self.address[2:]}"
+            f"{format(xp, '064x')}"
+            f"{format(int(nonce), '064x')}"
+            "0000000000000000000000000000000000000000000000000000000000000080"
+            f"0000000000000000000000000000000000000000000000000000000000000041{signature[2:]}"
+            "00000000000000000000000000000000000000000000000000000000000000"
+        )
+
+        status, tx_hash = await self.send_data_tx(
+            to=self.w3.to_checksum_address(
+                "0x557764618fc2f4eca692d422ba79c70f237113e6"
+            ),
+            from_=self.address,
+            data=data,
+            gas_price=self.w3.to_wei("0.00002", "gwei"),
+            gas_limit=100000,
+            chain_id=204,
+        )
+        if not status:
+            raise RuntimeError(f"Error while sending ruffle tx | {tx_hash}")
+
+        return status, tx_hash
+
+    @retry
+    async def send_ruffle_hash(self, tx_hash):
+        response = await self.make_request(
+            "post",
+            "https://api.starrynift.art/api-v2/webhook/confirm/raffle/mint",
+            json={"txHash": tx_hash},
+        )
+
+        if response.status not in (200, 201) or (await response.json()).get("ok") != 1:
+            raise RuntimeError(
+                f"Error while sending ruffle tx hash | {await response.text()}"
+            )
+
+        return True
+
+    @retry
+    async def get_ruffle_info(self):
+        response = await self.make_request(
+            "post",
+            f"https://api.starrynift.art/api-v2/citizenship/raffle/status",
+            json={},
+        )
+
+        if response.status not in (200, 201):
+            raise RuntimeError(
+                f"Error while getting ruffle info | {await response.text()}"
+            )
+
+        return await response.json()

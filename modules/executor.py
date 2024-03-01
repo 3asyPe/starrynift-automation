@@ -51,6 +51,7 @@ class Executor:
                         continue
 
                 await account.daily_claim()
+                await account.ruffle()
                 await account.complete_quests()
 
     async def get_accounts_stats(self):
